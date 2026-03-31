@@ -1,12 +1,12 @@
-name: Hotfix Backport to Develop (auto hotfix-2)
+name: Hotfix Backport to Develop (on PR create/update)
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
 jobs:
-  create-hotfix-backport:
-    # Safety checks - only run for hotfix PRs targeting master
+  backport-hotfix:
+    # Run only for hotfix branches targeting master
     if: >
       github.event.pull_request.base.ref == 'master' &&
       startsWith(github.event.pull_request.head.ref, 'hotfix/')
@@ -18,45 +18,59 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Checkout develop (base for hotfix-2)
+      - name: Checkout develop (base for backport)
         uses: actions/checkout@v4
         with:
           ref: develop
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure git
+      - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Parse ticket and compute backport branch name
+      - name: Parse branch name and create backport branch
         id: parse
         run: |
-          ORIGINAL_BRANCH="${{ github.event.pull_request.head.ref }}"
-          TICKET="${ORIGINAL_BRANCH#hotfix/}"
-          BACKPORT_BRANCH="hotfix/${TICKET}-2"
-          echo "backport_branch=${BACKPORT_BRANCH}" >> $GITHUB_OUTPUT
-          echo "✅ Backport branch will be: ${BACKPORT_BRANCH}"
+          ORIGINAL="${{ github.event.pull_request.head.ref }}"
+          TICKET="${ORIGINAL#hotfix/}"
+          BACKPORT="hotfix/${TICKET}-2"
+          echo "backport_branch=${BACKPORT}" >> $GITHUB_OUTPUT
+          echo "ticket=${TICKET}" >> $GITHUB_OUTPUT
+          echo "✅ Creating backport branch: ${BACKPORT}"
 
-      - name: Create/reset hotfix-2 branch from develop
+      - name: Create or reset backport branch from develop
         run: |
           git checkout -B ${{ steps.parse.outputs.backport_branch }}
 
-      - name: Fetch the hotfix PR branch
+      - name: Fetch the hotfix branch
         run: |
+          git fetch origin master
           git fetch origin ${{ github.event.pull_request.head.ref }}
 
-      - name: Cherry-pick all commits from the hotfix PR
+      - name: Cherry-pick non-merge commits (safer for merge-heavy workflows)
+        id: cherrypick
+        continue-on-error: true
         run: |
-          echo "Cherry-picking commits from master..${{ github.event.pull_request.head.ref }}"
-          git cherry-pick origin/${{ github.event.pull_request.base.ref }}..origin/${{ github.event.pull_request.head.ref }}
+          echo "Cherry-picking commits from hotfix PR..."
+          COMMITS=$(git log --no-merges --pretty=format:%H origin/master..origin/${{ github.event.pull_request.head.ref }} | tac)
 
-      - name: Push the updated hotfix-2 branch
+          if [ -z "$COMMITS" ]; then
+            echo "No non-merge commits found - trying with merge handling..."
+            git cherry-pick -m 1 origin/master..origin/${{ github.event.pull_request.head.ref }} || echo "Some conflicts occurred"
+          else
+            for commit in $COMMITS; do
+              echo "→ Cherry-picking $commit"
+              git cherry-pick "$commit" || echo "⚠️ Conflict on $commit"
+            done
+          fi
+
+      - name: Push backport branch (force update on every change)
         run: |
           git push --force origin ${{ steps.parse.outputs.backport_branch }}
 
-      - name: Create or update backport PR to develop
+      - name: Create or update the backport PR to develop
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -64,10 +78,14 @@ jobs:
           base: develop
           title: "[Backport] ${{ github.event.pull_request.head.ref }} → develop"
           body: |
-            Auto-generated backport of PR #${{ github.event.pull_request.number }}  
-            Original PR: [${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }})
+            **Automatic backport** of PR #${{ github.event.pull_request.number }}
 
-            This PR was created/updated automatically when the hotfix PR was opened or changed.
+            Original PR: [${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }})
+            Source branch: `hotfix/${{ steps.parse.outputs.ticket }}` (from master)
+
+            This PR is updated automatically whenever the original hotfix PR changes.
+
+            ⚠️ If conflicts appear, please resolve them manually before merging to develop.
           labels: backport, hotfix
           assignees: ${{ github.actor }}
           draft: false
