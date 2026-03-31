@@ -1,12 +1,11 @@
-name: Hotfix Backport to Develop (on PR create/update)
+name: Hotfix Parallel Backport to Develop
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
 jobs:
-  backport-hotfix:
-    # Run only for hotfix branches targeting master
+  create-or-update-backport:
     if: >
       github.event.pull_request.base.ref == 'master' &&
       startsWith(github.event.pull_request.head.ref, 'hotfix/')
@@ -18,7 +17,7 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Checkout develop (base for backport)
+      - name: Checkout develop as base
         uses: actions/checkout@v4
         with:
           ref: develop
@@ -30,7 +29,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Parse branch name and create backport branch
+      - name: Parse ticket and set backport branch name
         id: parse
         run: |
           ORIGINAL="${{ github.event.pull_request.head.ref }}"
@@ -38,39 +37,43 @@ jobs:
           BACKPORT="hotfix/${TICKET}-2"
           echo "backport_branch=${BACKPORT}" >> $GITHUB_OUTPUT
           echo "ticket=${TICKET}" >> $GITHUB_OUTPUT
-          echo "✅ Creating backport branch: ${BACKPORT}"
 
-      - name: Create or reset backport branch from develop
+      - name: Reset backport branch to current develop
         run: |
           git checkout -B ${{ steps.parse.outputs.backport_branch }}
 
-      - name: Fetch the hotfix branch
+      - name: Fetch hotfix branch
         run: |
           git fetch origin master
           git fetch origin ${{ github.event.pull_request.head.ref }}
 
-      - name: Cherry-pick non-merge commits (safer for merge-heavy workflows)
+      - name: Cherry-pick only non-merge commits (skip master merges)
         id: cherrypick
         continue-on-error: true
         run: |
-          echo "Cherry-picking commits from hotfix PR..."
+          echo "=== Cherry-picking only real hotfix changes (skipping merge commits from master) ==="
+
+          # Get only non-merge commits in chronological order
           COMMITS=$(git log --no-merges --pretty=format:%H origin/master..origin/${{ github.event.pull_request.head.ref }} | tac)
 
           if [ -z "$COMMITS" ]; then
-            echo "No non-merge commits found - trying with merge handling..."
-            git cherry-pick -m 1 origin/master..origin/${{ github.event.pull_request.head.ref }} || echo "Some conflicts occurred"
+            echo "No non-merge commits found in this PR."
+            echo "CONFLICT_STATUS=clean" >> $GITHUB_ENV
           else
             for commit in $COMMITS; do
-              echo "→ Cherry-picking $commit"
-              git cherry-pick "$commit" || echo "⚠️ Conflict on $commit"
+              echo "→ Cherry-picking commit: $commit"
+              if ! git cherry-pick "$commit"; then
+                echo "⚠️ Conflict detected on commit $commit"
+                echo "CONFLICT_STATUS=has_conflicts" >> $GITHUB_ENV
+              fi
             done
           fi
 
-      - name: Push backport branch (force update on every change)
+      - name: Push (or force-update) the backport branch
         run: |
           git push --force origin ${{ steps.parse.outputs.backport_branch }}
 
-      - name: Create or update the backport PR to develop
+      - name: Create or update the backport PR
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -78,14 +81,14 @@ jobs:
           base: develop
           title: "[Backport] ${{ github.event.pull_request.head.ref }} → develop"
           body: |
-            **Automatic backport** of PR #${{ github.event.pull_request.number }}
+            **Automatic parallel backport** for hotfix PR #${{ github.event.pull_request.number }}
 
             Original PR: [${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }})
-            Source branch: `hotfix/${{ steps.parse.outputs.ticket }}` (from master)
 
-            This PR is updated automatically whenever the original hotfix PR changes.
+            This PR is kept in sync automatically whenever the original hotfix PR (`hotfix/${{ steps.parse.outputs.ticket }}`) is updated.
 
-            ⚠️ If conflicts appear, please resolve them manually before merging to develop.
+            Only non-merge commits were cherry-picked (master merges into the hotfix branch are intentionally skipped to avoid leaking master changes into develop).
+
+            ${{ env.CONFLICT_STATUS == 'has_conflicts' && '⚠️ Conflicts occurred during cherry-pick. Please resolve them manually.' || '✅ No conflicts detected.' }}
           labels: backport, hotfix
           assignees: ${{ github.actor }}
-          draft: false
