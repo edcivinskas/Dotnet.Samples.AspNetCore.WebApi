@@ -89,7 +89,7 @@ public class PlayerController(
      * ---------------------------------------------------------------------- */
 
     /// <summary>
-    /// Retrieves all Players
+    /// Retrieves all Players. In a real application we would likely want to paginate this endpoint if the number of players could grow large over time. For simplicity, pagination is omitted here.
     /// </summary>
     /// <response code="200">OK</response>
     /// <response code="404">Not Found</response>
@@ -153,32 +153,6 @@ public class PlayerController(
     /// <param name="squadNumber">The Squad Number of the Player</param>
     /// <response code="200">OK</response>
     /// <response code="404">Not Found</response>
-    [HttpGet("squadNumber/{squadNumber:int}", Name = "RetrieveBySquadNumber")]
-    [ProducesResponseType<PlayerResponseModel>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
-    public async Task<IResult> GetBySquadNumberAsync([FromRoute] int squadNumber)
-    {
-        var player = await playerService.RetrieveBySquadNumberAsync(squadNumber);
-        if (player != null)
-        {
-            logger.LogInformation(
-                "GET /players/squadNumber/{SquadNumber} retrieved: {@Player}",
-                squadNumber,
-                player
-            );
-            return TypedResults.Ok(player);
-        }
-        else
-        {
-            logger.LogWarning("GET /players/squadNumber/{SquadNumber} not found", squadNumber);
-            return TypedResults.Problem(
-                statusCode: StatusCodes.Status404NotFound,
-                title: NotFoundTitle,
-                detail: $"Player with Squad Number '{squadNumber}' was not found.",
-                instance: HttpContext?.Request?.Path.ToString()
-            );
-        }
-    }
 
     /* -------------------------------------------------------------------------
      * HTTP PUT
