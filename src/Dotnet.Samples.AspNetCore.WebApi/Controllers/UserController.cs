@@ -17,6 +17,11 @@ public class UserController(
     ) : ControllerBase
 {
 
+    /// <summary>
+    /// Returs a player by their squad number.
+    /// </summary>
+    /// <param name="squadNumber"></param>
+    /// <returns></returns>
     [HttpGet("squadNumber/{squadNumber:int}", Name = "RetrieveBySquadNumber")]
     [ProducesResponseType<PlayerResponseModel>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
