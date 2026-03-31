@@ -89,7 +89,7 @@ public class PlayerController(
      * ---------------------------------------------------------------------- */
 
     /// <summary>
-    /// Retrieves all Players
+    /// Retrieves all Players. In a real application we would likely want to paginate this endpoint if the number of players could grow large over time. For simplicity, pagination is omitted here.
     /// </summary>
     /// <response code="200">OK</response>
     /// <response code="404">Not Found</response>
